@@ -275,7 +275,22 @@ def transform_file(input_path: str) -> str:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def file_contains_division(input_path: str) -> bool:
+    """Return True if the file contains the '/' symbol (used for division)."""
+    import subprocess
+    result = subprocess.run(
+        ['grep', '-qF', '/', input_path],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
 def process_file(input_path: str) -> None:
+    if not file_contains_division(input_path):
+        print(f"Skipped (no division): {input_path}")
+        return
+
     output_path = os.path.join('nodiv', input_path)
     output_dir = os.path.dirname(output_path)
     if output_dir:
