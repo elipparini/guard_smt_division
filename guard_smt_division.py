@@ -147,11 +147,12 @@ def make_nonzero_guard(den: z3.ExprRef) -> z3.BoolRef:
 # Formula transformation
 # ---------------------------------------------------------------------------
 
-def transform_formula(expr: z3.ExprRef) -> z3.ExprRef:
+def transform_formula(expr: z3.ExprRef, changed: list[bool]) -> z3.ExprRef:
     """
     Recursively walk the boolean structure.  At each literal L that contains
     a division (/ · den) with a non-constant denominator, replace L with
     (and L (not (= den 0))).
+    Sets changed[0] = True whenever a guard is actually inserted.
     """
     if not z3.is_bool(expr):
         return expr
@@ -168,26 +169,27 @@ def transform_formula(expr: z3.ExprRef) -> z3.ExprRef:
             if key not in unique:
                 unique[key] = d
         guards = [make_nonzero_guard(d) for d in unique.values()]
+        changed[0] = True
         return z3.And(expr, *guards)
 
     # ---- propositional connectives: recurse ----
     if z3.is_and(expr):
-        return z3.And(*[transform_formula(c) for c in expr.children()])
+        return z3.And(*[transform_formula(c, changed) for c in expr.children()])
     if z3.is_or(expr):
-        return z3.Or(*[transform_formula(c) for c in expr.children()])
+        return z3.Or(*[transform_formula(c, changed) for c in expr.children()])
     if z3.is_not(expr):
         # not(non-atom) — recurse inside
-        return z3.Not(transform_formula(expr.arg(0)))
+        return z3.Not(transform_formula(expr.arg(0), changed))
     if z3.is_implies(expr):
         return z3.Implies(
-            transform_formula(expr.arg(0)),
-            transform_formula(expr.arg(1)),
+            transform_formula(expr.arg(0), changed),
+            transform_formula(expr.arg(1), changed),
         )
     if z3.is_app(expr) and expr.decl().kind() == z3.Z3_OP_ITE:
         return z3.If(
-            transform_formula(expr.arg(0)),
-            transform_formula(expr.arg(1)),
-            transform_formula(expr.arg(2)),
+            transform_formula(expr.arg(0), changed),
+            transform_formula(expr.arg(1), changed),
+            transform_formula(expr.arg(2), changed),
         )
 
     # Quantifiers and unknown structures: leave unchanged
@@ -198,11 +200,12 @@ def transform_formula(expr: z3.ExprRef) -> z3.ExprRef:
 # Per-assertion parse + transform
 # ---------------------------------------------------------------------------
 
-def transform_assert(ctx_commands: list[str], assert_cmd: str) -> str:
+def transform_assert(ctx_commands: list[str], assert_cmd: str, changed: list[bool]) -> str:
     """
     Parse *assert_cmd* in the context provided by *ctx_commands*, apply the
     transformation, and return the new (assert ...) string.
     Falls back to the original command on parse errors.
+    Sets changed[0] = True if a guard was actually inserted.
     """
     z3_ctx = z3.Context()
     full_smt = '\n'.join(ctx_commands) + '\n' + assert_cmd
@@ -221,7 +224,7 @@ def transform_assert(ctx_commands: list[str], assert_cmd: str) -> str:
                if len(assertions) == 1
                else z3.And(*list(assertions), ctx=z3_ctx))
 
-    transformed = transform_formula(formula)
+    transformed = transform_formula(formula, changed)
     return f"(assert {transformed.sexpr()})"
 
 
@@ -249,14 +252,16 @@ def simplify_to_real(text: str) -> str:
         text = new
 
 
-def transform_file(input_path: str) -> str:
-    """Read *input_path*, transform all assertions, return the result."""
+def transform_file(input_path: str) -> tuple[str, bool]:
+    """Read *input_path*, transform all assertions, return (result, changed).
+    changed is True only if at least one guard was actually inserted."""
     with open(input_path, 'r') as fh:
         text = fh.read()
 
     commands = parse_smt2_commands(text)
     ctx_commands: list[str] = []
     result: list[str] = []
+    changed: list[bool] = [False]
 
     for cmd in commands:
         name = get_command_name(cmd)
@@ -264,11 +269,11 @@ def transform_file(input_path: str) -> str:
             ctx_commands.append(cmd)
             result.append(cmd)
         elif name == 'assert':
-            result.append(simplify_to_real(transform_assert(ctx_commands, cmd)))
+            result.append(simplify_to_real(transform_assert(ctx_commands, cmd, changed)))
         else:
             result.append(cmd)
 
-    return '\n'.join(result) + '\n'
+    return '\n'.join(result) + '\n', changed[0]
 
 
 # ---------------------------------------------------------------------------
@@ -288,15 +293,19 @@ def file_contains_division(input_path: str) -> bool:
 
 def process_file(input_path: str) -> None:
     if not file_contains_division(input_path):
-        print(f"Skipped (no division): {input_path}")
+        print(f"Skipped (no '/'): {input_path}")
+        return
+
+    result, changed = transform_file(input_path)
+
+    if not changed:
+        print(f"Skipped (no non-constant denominator): {input_path}")
         return
 
     output_path = os.path.join('nodiv', input_path)
     output_dir = os.path.dirname(output_path)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-
-    result = transform_file(input_path)
 
     with open(output_path, 'w') as fh:
         fh.write(result)
