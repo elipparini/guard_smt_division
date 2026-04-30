@@ -1,6 +1,6 @@
 # guard_smt_division
 
-A Python script that rewrites SMT-LIB 2 files to guard division by zero.
+A C program that rewrites SMT-LIB 2 files to guard division by zero.
 
 ## What it does
 
@@ -10,20 +10,26 @@ For every literal `L` in an assertion that contains a subterm `(/ num den)` wher
 (and L (not (= den 0)))
 ```
 
-
 ## Requirements
 
-- Python 3.10+
-- [Z3](https://github.com/Z3Prover/z3) Python bindings (`pip install z3-solver`)
+- GCC (or any C11-compatible compiler)
+- [Z3](https://github.com/Z3Prover/z3) C library and headers (`libz3-dev`)
+- `pkg-config` (used by the Makefile to locate Z3)
+
+## Building
+
+```bash
+make
+```
 
 ## Usage
 
 ```bash
 # Transform a single file
-python guard_smt_division.py test_folder/div_test1.smt2
+./guard_smt_division test_folder/div_test1.smt2
 
 # Transform all .smt2 files in a directory (recursively)
-python guard_smt_division.py test_folder
+./guard_smt_division test_folder
 ```
 
 Output files are written under `nodiv/`, mirroring the input path. For example:
